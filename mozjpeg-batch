@@ -1,0 +1,119 @@
+#!/bin/bash -e
+# ---------------------------------------------------------------------------
+# mozjpeg-batch
+#  - scan a directory, find images and save compressed images into a new directory
+
+# Copyright 2017 linuxfan.info
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License at <http://www.gnu.org/licenses/> for
+# more details.
+
+# Usage: mozjpeg-batch [-l] [-q VALUE] [-c OPTION] SRC_DIR DST_DIR
+#   -l		compress with jpegtran only (lossless compression)
+#   -q VALUE	quality value for cjpeg command
+#   -c OPTION	copy value for jpegtran [none|comments|all]
+#   -s		skip if file already exists
+#   -o		don't backup and overwrite if file already exists
+
+# This script requires mozjpeg-wrap script
+# mozjpeg-wrap requires exiftool
+
+# Revision history:
+# 2017-08-14 Created
+# ---------------------------------------------------------------------------
+
+function usage() {
+  cat <<_EOT_
+Usage:
+  $0 [-l] [-q VALUE] [-c OPTION] SRC_DIR DST_DIR
+    -l		compress with jpegtran only (lossless compression)
+    -q VALUE	quality value for cjpeg command
+    -c OPTION	copy value for jpegtran [none|comments|all]
+    -s		skip if file already exists
+    -o		don't backup and overwrite if file already exists
+_EOT_
+  exit 1
+}
+
+function check_command() {
+  type $1 >/dev/null 2>&1 || { echo >&2 "This script requires $1 but it's not found.  Aborting."; exit 1; }
+}
+
+if [ $# -lt 2 ]; then
+  usage
+fi
+
+check_command mozjpeg-wrap
+check_command exiftool
+
+WRAP_OPTION=""
+OVERWRITE=0
+SKIP=0
+while getopts "lq:c:os" opts
+do
+  case $opts in
+    l)
+      WRAP_OPTION="$WRAP_OPTION -l"
+      ;;
+    q)
+      WRAP_OPTION="$WRAP_OPTION -q $OPTARG"
+      ;;
+    c)
+      WRAP_OPTION="$WRAP_OPTION -c $OPTARG"
+      ;;
+    o)
+      OVERWRITE=1
+      ;;
+    s)
+      SKIP=1
+      ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+SRC_DIR_BASE=${1%/}
+DST_DIR_BASE=${2%/}
+EXTS='JPG jpg jpeg BMP bmp GIF gif PNG png'
+
+if [ ! -d "$SRC_DIR_BASE" ]; then
+  echo "$SRC_DIR_BASE is not a directory. Aborting."
+  exit 1
+fi
+
+if [ ! -e "$DST_DIR_BASE" ]; then
+  mkdir -p "$DST_DIR_BASE"
+elif [ ! -d  "$DST_DIR_BASE" ]; then
+  echo "$DST_DIR_BASE is not a directory. Aborting."
+  exit 1
+fi
+
+NAME_PATTERN=""
+for ext in $EXTS
+do
+  [[ -z $NAME_PATTERN ]] || NAME_PATTERN="${NAME_PATTERN} -o"
+  NAME_PATTERN="${NAME_PATTERN} -name '*.${ext}' "
+done
+NAME_PATTERN="\( ${NAME_PATTERN} \)"
+
+eval find "$SRC_DIR_BASE" ${NAME_PATTERN} -print0 | while IFS= read -r -d '' SRC_FILE; do
+  DST_FILE="${SRC_FILE/$SRC_DIR_BASE/$DST_DIR_BASE}"
+  [[ -z "$DST_FILE" || "$DST_FILE" == "$SRC_FILE" ]] && continue
+  if [[ ! "$DST_FILE" =~ \.JPG$ && ! "$DST_FILE" =~ \.jpg$ && ! "$DST_FILE" =~ \.jpeg$ ]]; then
+    DST_FILE="${DST_FILE/.*}.jpg"
+  fi
+  [[ $SKIP -eq 1 ]] && [[ -e "$DST_FILE" ]] && continue
+  echo "$SRC_FILE"
+  echo " -> $DST_FILE"
+  DST_DIR=$(dirname "$DST_FILE")
+  [[ -e "$DST_DIR" ]] || mkdir -p "$DST_DIR"
+  [[ $OVERWRITE -eq 0 ]] && [[ -e "$DST_FILE" ]] && mv "$DST_FILE" "${DST_FILE}.bak"
+  mozjpeg-wrap $WRAP_OPTION "$SRC_FILE" > "$DST_FILE" || true
+done

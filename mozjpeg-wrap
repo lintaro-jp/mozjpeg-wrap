@@ -1,0 +1,115 @@
+#!/bin/bash -e
+# ---------------------------------------------------------------------------
+# mozjpeg-wrap
+#  - Wrapper for cjpeg and jpegtran
+#    Lossy or Lossless JPEG commpression, remove EXIF and rotate image 
+#    according to given options.
+
+# Copyright 2017 linuxfan.info
+  
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License at <http://www.gnu.org/licenses/> for
+# more details.
+
+# Usage: mozjpeg-wrap [-l] [-q VALUE] [-c OPTION] FILE
+#   -l          compress with jpegtran only (lossless compression)
+#   -q VALUE    quality value for cjpeg command
+#   -c OPTION   copy value for jpegtran [none|comments|all]
+
+# This script requires exiftool
+
+# Revision history:
+# 2017-08-14 Created
+# ---------------------------------------------------------------------------
+
+# directory installed mozjpeg commands
+MOZJPEG_BIN_DIR=/opt/mozjpeg/bin
+
+# Default values
+QUALITY=75
+COPY=all
+LOSSLESS=0
+
+function usage() {
+  cat <<_EOT_
+Usage:
+  $0 [-l] [-q VALUE] [-c OPTION] FILE
+    -l          compress with jpegtran only (lossless compression)
+    -q VALUE    quality value for cjpeg command
+    -c OPTION   copy value for jpegtran [none|comments|all]
+_EOT_
+  exit 1
+}
+
+if [ $# -lt 1 ]; then
+  usage
+fi
+
+CJPEG=${MOZJPEG_BIN_DIR}/cjpeg
+JPEGTRAN=${MOZJPEG_BIN_DIR}/jpegtran
+
+[ -x $CJPEG ] || { echo >&2 "This script requires $CJPEG but it's not found.  Aborting."; exit 1; }
+[ -x $JPEGTRAN ] || { echo >&2 "This script requires $JPEGTRAN but it's not found.  Aborting."; exit 1; }
+
+function check_command() {
+  type $1 >/dev/null 2>&1 || { echo >&2 "This script requires $1 but it's not found.  Aborting."; exit 1; }
+}
+
+check_command exiftool
+
+while getopts "lq:c:" opts
+do
+  case $opts in
+    l)
+      LOSSLESS=1
+      ;;
+    q)
+      QUALITY=$OPTARG
+      ;;
+    c)
+      COPY=$OPTARG
+      ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+if [ ! -e "$1" ]; then
+  echo "$1 is not found" >&2
+  exit 1
+fi
+
+TRANSFORM=""
+set_transform () {
+  case `exiftool -q -m -n -p '\$Orientation' "$1" 2>/dev/null` in
+    2) TRANSFORM="-flip horizontal";;
+    3) TRANSFORM="-rotate 180";;
+    4) TRANSFORM="-flip vertical";;
+    5) TRANSFORM="-transpose";;
+    6) TRANSFORM="-rotate 90";;
+    7) TRANSFORM="-transverse";;
+    8) TRANSFORM="-rotate 270";;
+  esac
+}
+
+if [[ $LOSSLESS -eq 1 ]] && [[ "$1" =~ \.JPG$ || "$1" =~ \.jpg$ || "$1" =~ \.jpeg$ ]]; then
+  # Lossless
+  if [ "$COPY" != "all" ]; then
+    set_transform "$1"
+  fi
+  $JPEGTRAN -copy $COPY $TRANSFORM "$1"
+else
+  # Lossy
+  if [ "$COPY" = "all" ]; then
+    $CJPEG -quality $QUALITY "$1"
+  else
+    set_transform "$1"
+    $CJPEG -quality $QUALITY "$1" | $JPEGTRAN -copy $COPY $TRANSFORM
+  fi
+fi
